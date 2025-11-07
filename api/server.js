@@ -63,44 +63,48 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 app.post("/feedback", async (req, res) => {
     try {
         const { userId, message } = SubmitSchema.parse(req.body);
+
         const { rows } = await pool.query(
             `INSERT INTO feedback (user_id, message)
              VALUES ($1, $2)
                  RETURNING id, created_at`,
             [userId, message]
         );
-        res.status(201).json({
-            id: rows[0].id,
-            createdAt: rows[0].created_at,
-        });
+
+        const id = rows[0].id;
+        // 🔔 tell listeners a new row arrived
+        await pool.query(`SELECT pg_notify('feedback_new', $1)`, [id]);
+
+        res.status(201).json({ id, createdAt: rows[0].created_at });
     } catch (e) {
-        if (e?.issues)
-            return res.status(400).json({ error: "validation_error", details: e.issues });
+        if (e?.issues) return res.status(400).json({ error: "validation_error", details: e.issues });
         console.error(e);
         res.status(500).json({ error: "server_error" });
     }
 });
 
+
 // GET /feedback (public preview)
-app.get("/feedback", async (_req, res) => {
+app.get("/feedback/:id", async (req, res) => {
     try {
         const { rows } = await pool.query(`
-      SELECT id,
-             user_id AS "userId",
-             message,
-             sentiment->>'label' AS "sentiment",
-             sentiment->>'score' AS "score",
-             created_at AS "createdAt"
-      FROM feedback
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
-        res.json(rows);
+            SELECT id,
+                   user_id AS "userId",
+                   message,
+                   sentiment->>'label' AS "sentiment",
+                sentiment->>'score'  AS "score",
+                created_at AS "createdAt"
+            FROM feedback
+            WHERE id = $1
+        `, [req.params.id]);
+        if (!rows.length) return res.status(404).json({ error: "not_found" });
+        res.json(rows[0]);
     } catch (e) {
         console.error(e);
         res.status(500).json({ error: "server_error" });
     }
 });
+
 
 // GET /admin/feedback?page=&pageSize=  (requires x-admin-key)
 const { ADMIN_API_KEY = "supersecretadminkey" } = process.env;

@@ -141,16 +141,28 @@
             body: JSON.stringify({ userId, message })
         });
 
-        if (!res.ok) {
-            const j = await res.json().catch(()=>({}));
-            toast(j.error || `Submit failed (${res.status})`, false);
-            return;
-        }
+        if (!res.ok) { toast('Submit failed', false); return; }
+        const created = await res.json();
         document.getElementById('message').value = '';
         toast('Feedback submitted ✅');
-        // optionally refresh list shortly after submit so sentiment appears soon
-        setTimeout(loadList, 1200);
+
+        // refresh the list and then poll just this id a few times
+        await loadList();
+        const id = created.id;
+        let tries = 10;                    // ~5s total
+        const tick = async () => {
+            try {
+                const r = await fetch(`/feedback/${id}`);
+                if (r.ok) {
+                    const row = await r.json();
+                    if (row.sentiment) { await loadList(); return; } // show badge
+                }
+            } catch {}
+            if (--tries > 0) setTimeout(tick, 500);
+        };
+        setTimeout(tick, 500);
     }
+
 
     function renderTable(json){
         const rows = json.data || [];
